@@ -1,10 +1,10 @@
-F# Use official Python image
+# Use official Python image
 FROM python:3.11-slim
 
 # Set working directory inside container
 WORKDIR /app
 
-# Copy requirements first and install
+# Copy requirements and install
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
