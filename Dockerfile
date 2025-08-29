@@ -1,20 +1,23 @@
 FROM python:3.11-slim
 
+# Prevents Python from writing .pyc files & ensures stdout/stderr are unbuffered
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
 WORKDIR /app
 
-# Install build dependencies
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    libffi-dev \
-    python3-dev \
-    && rm -rf /var/lib/apt/lists/*
+# System deps for building Python wheels
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential libffi-dev && \
+    rm -rf /var/lib/apt/lists/*
 
-# Copy and install Python dependencies
+# Install Python deps first (cache-friendly layer)
 COPY requirements.txt .
-RUN pip install --upgrade pip
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
+# Copy your app code
 COPY app/ ./app
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Railway provides $PORT at runtime
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "${PORT}"]
