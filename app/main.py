@@ -5,27 +5,16 @@ from pydantic import BaseModel
 import chromadb
 import pandas as pd
 from openai import OpenAI
+from threading import Lock
 
 app = FastAPI()
 
-# --- Chroma setup ---
+# --- Global variables ---
 CSV_FILE = "./TEMPLES.csv"
 COLLECTION_NAME = "TEMPLES"
 chroma_client = chromadb.PersistentClient(path="./chroma_db")
-
-# Preload collection at startup
-try:
-    collection = chroma_client.get_collection(COLLECTION_NAME)
-except chromadb.errors.InvalidCollectionException:
-    df = pd.read_csv(CSV_FILE, encoding="utf-8-sig")
-    df.columns = df.columns.str.strip()
-    collection = chroma_client.get_or_create_collection(COLLECTION_NAME)
-    for _, row in df.iterrows():
-        doc_id = str(row.get("id", _))
-        content = str(row.get("content", ""))
-        metadata = {col: str(row[col]) for col in df.columns if col != "content"}
-        collection.add(ids=[doc_id], documents=[content], metadatas=[metadata])
-    print(f"✅ {CSV_FILE} loaded into Chroma collection '{COLLECTION_NAME}'")
+collection = None
+collection_lock = Lock()  # Ensure thread-safe lazy initialization
 
 # --- Response model for GPT-4 endpoint ---
 class LLMResponse(BaseModel):
@@ -35,28 +24,45 @@ class LLMResponse(BaseModel):
 # --- GPT-4 powered /query endpoint ---
 @app.get("/query", response_model=LLMResponse)
 def query_chroma_llm(q: str = Query(..., description="Query text")):
+    global collection
+
     try:
         # Step 0: check API key
         OPENAI_KEY = os.getenv("OPENAI_API_KEY")
         if not OPENAI_KEY:
             raise ValueError("OPENAI_API_KEY environment variable is missing!")
-
         client = OpenAI(api_key=OPENAI_KEY)
 
-        # Step 1: retrieve top Chroma chunks
+        # Step 1: lazy Chroma initialization
+        with collection_lock:
+            if collection is None:
+                try:
+                    collection = chroma_client.get_collection(COLLECTION_NAME)
+                except chromadb.errors.InvalidCollectionException:
+                    df = pd.read_csv(CSV_FILE, encoding="utf-8-sig")
+                    df.columns = df.columns.str.strip()
+                    collection = chroma_client.get_or_create_collection(COLLECTION_NAME)
+                    for _, row in df.iterrows():
+                        doc_id = str(row.get("id", _))
+                        content = str(row.get("content", ""))
+                        metadata = {col: str(row[col]) for col in df.columns if col != "content"}
+                        collection.add(ids=[doc_id], documents=[content], metadatas=[metadata])
+                    print(f"✅ {CSV_FILE} loaded into Chroma collection '{COLLECTION_NAME}'")
+
+        # Step 2: retrieve top Chroma chunks
         results = collection.query(query_texts=[q], n_results=3)
         chunks = results['documents'][0] if 'documents' in results else []
         if not chunks:
             chunks = ["Sorry, I don’t have information on that topic yet."]
 
-        # Step 2: prepare prompt for GPT-4
+        # Step 3: prepare prompt for GPT-4
         prompt = (
             "You are a friendly Japanese travel guide. Use the following info to answer the user's question:\n\n"
             f"{chr(10).join(chunks)}\n\n"
             f"User question: {q}\n\nAnswer naturally and helpfully."
         )
 
-        # Step 3: call OpenAI GPT-4 using new API
+        # Step 4: call OpenAI GPT-4 using new API
         response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
