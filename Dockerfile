@@ -1,12 +1,14 @@
-FROM python:3.11-slim
+FFROM python:3.11-slim
 
 WORKDIR /app
 
+# Copy all files needed first
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY TEMPLES.csv ./TEMPLES.csv
+COPY app ./app
 
-COPY ./app ./app
-COPY ./TEMPLES.csv ./TEMPLES.csv       # <-- add this line
+# Install dependencies
+RUN pip install --no-cache-dir -r requirements.txt
 
 EXPOSE 8000
 
