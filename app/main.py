@@ -6,9 +6,6 @@ import chromadb
 import pandas as pd
 from openai import OpenAI
 
-# Set up OpenAI client
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
 app = FastAPI()
 
 # --- Chroma setup ---
@@ -39,6 +36,13 @@ class LLMResponse(BaseModel):
 @app.get("/query", response_model=LLMResponse)
 def query_chroma_llm(q: str = Query(..., description="Query text")):
     try:
+        # Step 0: check API key
+        OPENAI_KEY = os.getenv("OPENAI_API_KEY")
+        if not OPENAI_KEY:
+            raise ValueError("OPENAI_API_KEY environment variable is missing!")
+
+        client = OpenAI(api_key=OPENAI_KEY)
+
         # Step 1: retrieve top Chroma chunks
         results = collection.query(query_texts=[q], n_results=3)
         chunks = results['documents'][0] if 'documents' in results else []
