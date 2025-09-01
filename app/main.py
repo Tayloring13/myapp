@@ -4,23 +4,12 @@ from fastapi import FastAPI, Query
 from pydantic import BaseModel
 import chromadb
 import pandas as pd
+import openai
+
+# Set API key from environment variable
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
 app = FastAPI()
-
-# --- Root route for Railway health checks ---
-@app.get("/")
-def root():
-    return {"status": "ok"}
-
-# --- Ping route ---
-@app.get("/ping")
-def ping():
-    return {"message": "pong"}
-
-# --- Response model for clarity ---
-class QueryResponse(BaseModel):
-    query: str
-    results: list
 
 # --- Chroma setup ---
 CSV_FILE = "./TEMPLES.csv"
@@ -38,25 +27,58 @@ except chromadb.errors.InvalidCollectionException:
         doc_id = str(row.get("id", _))
         content = str(row.get("content", ""))
         metadata = {col: str(row[col]) for col in df.columns if col != "content"}
-        collection.add(
-            ids=[doc_id],
-            documents=[content],
-            metadatas=[metadata]
-        )
+        collection.add(ids=[doc_id], documents=[content], metadatas=[metadata])
     print(f"✅ {CSV_FILE} loaded into Chroma collection '{COLLECTION_NAME}'")
 
-# --- Chroma query endpoint ---
-@app.get("/query", response_model=QueryResponse)
-def query_chroma(q: str = Query(..., description="The query text to search in Chroma")):
+# --- Response model for GPT-4 endpoint ---
+class LLMResponse(BaseModel):
+    query: str
+    response: str
+
+# --- GPT-4 powered /query endpoint ---
+@app.get("/query", response_model=LLMResponse)
+def query_chroma_llm(q: str = Query(..., description="Query text")):
     try:
+        # Step 1: retrieve top Chroma chunks
         results = collection.query(query_texts=[q], n_results=3)
         chunks = results['documents'][0] if 'documents' in results else []
         if not chunks:
             chunks = ["Sorry, I don’t have information on that topic yet."]
-    except Exception as e:
-        chunks = [f"An error occurred while querying the database: {str(e)}"]
 
-    return QueryResponse(query=q, results=chunks)
+        # Step 2: prepare prompt for GPT-4
+        prompt = (
+            "You are a friendly Japanese travel guide. Use the following info to answer the user's question:\n\n"
+            f"{chr(10).join(chunks)}\n\n"
+            f"User question: {q}\n\nAnswer naturally and helpfully."
+        )
+
+        # Step 3: call OpenAI GPT-4
+        response = openai.ChatCompletion.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "You are a helpful Japanese travel guide."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7,
+            max_tokens=300
+        )
+
+        answer = response.choices[0].message.content.strip()
+
+    except Exception as e:
+        answer = f"An error occurred: {str(e)}"
+
+    return LLMResponse(query=q, response=answer)
+
+# --- Root route for Railway health checks ---
+@app.get("/")
+def root():
+    return {"status": "ok"}
+
+# --- Ping route ---
+@app.get("/ping")
+def ping():
+    return {"message": "pong"}
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8000"))
