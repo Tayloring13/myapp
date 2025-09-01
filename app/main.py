@@ -4,10 +4,10 @@ from fastapi import FastAPI, Query
 from pydantic import BaseModel
 import chromadb
 import pandas as pd
-import openai
+from openai import OpenAI
 
-# Set API key from environment variable
-openai.api_key = os.getenv("OPENAI_API_KEY")
+# Set up OpenAI client
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 app = FastAPI()
 
@@ -52,8 +52,8 @@ def query_chroma_llm(q: str = Query(..., description="Query text")):
             f"User question: {q}\n\nAnswer naturally and helpfully."
         )
 
-        # Step 3: call OpenAI GPT-4
-        response = openai.ChatCompletion.create(
+        # Step 3: call OpenAI GPT-4 using new API
+        response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
                 {"role": "system", "content": "You are a helpful Japanese travel guide."},
