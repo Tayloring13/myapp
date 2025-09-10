@@ -7,6 +7,8 @@ import pandas as pd
 from openai import OpenAI
 from threading import Lock
 
+from app.prompts import JAPANAUT_PROMPT
+
 app = FastAPI()
 
 # --- Global variables ---
@@ -16,12 +18,15 @@ chroma_client = chromadb.PersistentClient(path="./chroma_db")
 collection = None
 collection_lock = Lock()  # Ensure thread-safe lazy initialization
 
+# Choose model via env var if you want to change later
+MODEL = os.getenv("OPENAI_MODEL", "gpt-4.0-mini")
+
 # --- Response model for GPT-4 endpoint ---
 class LLMResponse(BaseModel):
     query: str
     response: str
 
-# --- GPT-4 powered /query endpoint ---
+# --- GPT-powered /query endpoint ---
 @app.get("/query", response_model=LLMResponse)
 def query_chroma_llm(q: str = Query(..., description="Query text")):
     global collection
@@ -51,23 +56,25 @@ def query_chroma_llm(q: str = Query(..., description="Query text")):
 
         # Step 2: retrieve top Chroma chunks
         results = collection.query(query_texts=[q], n_results=3)
-        chunks = results['documents'][0] if 'documents' in results else []
+        chunks = results.get('documents', [[]])[0]
         if not chunks:
             chunks = ["Sorry, I don’t have information on that topic yet."]
 
-        # Step 3: prepare prompt for GPT-4
-        prompt = (
-            "You are a friendly Japanese travel guide. Use the following info to answer the user's question:\n\n"
-            f"{chr(10).join(chunks)}\n\n"
-            f"User question: {q}\n\nAnswer naturally and helpfully."
+        # Step 3: prepare user message (context + user question)
+        context_text = chr(10).join(chunks)
+        user_message = (
+            "Use the following extracted notes to answer the user's question.\n\n"
+            f"{context_text}\n\n"
+            f"User question: {q}\n\n"
+            "Answer naturally and helpfully in Japanaut's voice."
         )
 
-        # Step 4: call OpenAI GPT-4 using new API
+        # Step 4: call OpenAI Chat API with system prompt = JAPANAUT_PROMPT
         response = client.chat.completions.create(
-            model="gpt-4o",
+            model=MODEL,
             messages=[
-                {"role": "system", "content": "You are a helpful Japanese travel guide."},
-                {"role": "user", "content": prompt}
+                {"role": "system", "content": JAPANAUT_PROMPT},
+                {"role": "user", "content": user_message}
             ],
             temperature=0.7,
             max_tokens=300

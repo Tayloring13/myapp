@@ -1,0 +1,49 @@
+# Japanaut Placeholder Handlers
+
+This file documents all placeholder actions in Flutterflow.  
+Each placeholder should be replaced with real functions after migration to Flutter code.  
+Format: `placeholder_[widgetType]_[functionName] → Action: "Sample message or behavior"`
+
+---
+
+## Voice Selection
+- placeholder_button_voice_friendly → Snackbar: "Voice: Friendly (placeholder)"
+- placeholder_button_voice_chill → Snackbar: "Voice: Chill (placeholder)"
+- placeholder_button_voice_classic → Snackbar: "Voice: Classic Guide (placeholder)"
+
+## Gender Choice
+- placeholder_button_gender_female → Snackbar: "Gender: Female (placeholder)"
+- placeholder_button_gender_neutral → Snackbar: "Gender: Neutral (placeholder)"
+- placeholder_button_gender_male → Snackbar: "Gender: Male (placeholder)"
+
+---
+
+## Personalization Sliders
+- placeholder_slider_persona_curiosity → Updates label: "Curiosity: {value}%"
+- placeholder_slider_depth → Updates label: "Depth: {value}%"
+- placeholder_slider_interest → Updates label: "Interest: {value}"
+
+---
+
+## Navigation Buttons
+- placeholder_nav_home → Navigate: HomePlaceholder screen
+- placeholder_nav_back → Navigate: BackPlaceholder screen
+- placeholder_nav_settings → Navigate: SettingsPlaceholder screen
+- placeholder_nav_about → Navigate: AboutPlaceholder screen
+
+---
+
+## “What do you want to do today, [name]?” Tiles
+- placeholder_button_mic → Snackbar: "Mic tapped (placeholder)"
+- placeholder_tile_phrases → Navigate: PhrasesPlaceholder screen
+- placeholder_tile_sights → Navigate: SightsPlaceholder screen
+- placeholder_tile_culture → Navigate: CulturePlaceholder screen
+- placeholder_tile_ask → Navigate: AskPlaceholder screen
+- placeholder_tile_mission → Navigate: MissionPlaceholder screen
+
+---
+
+## Listening / Thinking / Talking States
+- placeholder_state_listening → Snackbar: "Listening…" + toggle ear icon
+- placeholder_state_thinking → Snackbar: "Thinking…" + toggle brain icon
+- placeholder_state_talking → Snackbar: "Talking…" + toggle speech bubble icon
