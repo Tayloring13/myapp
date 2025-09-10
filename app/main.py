@@ -19,7 +19,7 @@ collection = None
 collection_lock = Lock()  # Ensure thread-safe lazy initialization
 
 # Choose model via env var if you want to change later
-MODEL = os.getenv("OPENAI_MODEL", "gpt-4.0-mini")
+MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
 # --- Response model for GPT-4 endpoint ---
 class LLMResponse(BaseModel):
