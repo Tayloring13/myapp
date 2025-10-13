@@ -118,13 +118,13 @@ async def voice_query(audio: UploadFile = File(...)):
         print(f"🔑 ELEVENLABS_API_KEY present: {bool(ELEVENLABS_KEY)}")
         print(f"🔑 ELEVENLABS_VOICE_ID present: {bool(ELEVENLABS_VOICE)}")
         if ELEVENLABS_KEY:
-        print(f"🔑 API Key length: {len(ELEVENLABS_KEY)}")
+            print(f"🔑 API Key length: {len(ELEVENLABS_KEY)}")
 
         if not ELEVENLABS_KEY or not ELEVENLABS_VOICE:
-        return Response(
-        content="ElevenLabs credentials not configured",
-        status_code=500
-        )
+            return Response(
+                content="ElevenLabs credentials not configured",
+                status_code=500
+            )
         
         
         # Initialize Whisper model (lazy load)
