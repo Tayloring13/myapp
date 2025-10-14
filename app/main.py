@@ -1,3 +1,6 @@
+from dotenv import load_dotenv
+load_dotenv()  # <-- loads your .env file immediately
+
 import os
 import uvicorn
 from fastapi import FastAPI, Query, File, UploadFile

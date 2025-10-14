@@ -1,0 +1,27 @@
+🧩 1. Confirm What You Did to Make It Work
+
+You basically ran two separate processes (and that’s what you’ll want to repeat later).
+
+Terminal #1 → Run the server
+& C:/Users/taylo/myapp-clean/venv/Scripts/Activate.ps1
+python app/server.py
+
+
+Once you saw:
+
+Application startup complete.
+
+
+you left that running.
+
+Terminal #2 → Send a voice query
+
+Then you opened a new terminal, activated the venv again, and ran:
+
+& C:/Users/taylo/myapp-clean/venv/Scripts/Activate.ps1
+python test_voice_query.py
+
+
+That sent the WAV file to the running server, got the OpenAI reply, and produced your ElevenLabs-voiced reply.wav.
+
+.
