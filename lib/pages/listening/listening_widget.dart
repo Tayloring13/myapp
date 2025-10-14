@@ -148,6 +148,10 @@ class _ListeningWidgetState extends State<ListeningWidget> {
                           },
                         );
 
+                        if (_model.recordedAudioFile != null) {
+                          await sendAudioToBackend(_model.recordedAudioFile!);
+                        }
+
                         safeSetState(() {});
                       },
                       text: 'DONE',
