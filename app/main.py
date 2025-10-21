@@ -19,8 +19,8 @@ from app.prompts import JAPANAUT_PROMPT
 app = FastAPI()
 
 # --- Global variables ---
-CSV_FILE = "./TEMPLES.csv"
-COLLECTION_NAME = "TEMPLES"
+CSV_FILE = "./temples_kamakura_v1.csv"  # ✅ Updated filename
+COLLECTION_NAME = "temples_kamakura"     # ✅ Updated collection name
 chroma_client = chromadb.PersistentClient(path="./chroma_db")
 collection = None
 collection_lock = Lock()
@@ -54,30 +54,87 @@ def get_gpt_response(query_text: str) -> str:
             if collection is None:
                 try:
                     collection = chroma_client.get_collection(COLLECTION_NAME)
+                    print(f"✅ Loaded existing Chroma collection '{COLLECTION_NAME}'")
                 except chromadb.errors.InvalidCollectionException:
+                    # Collection doesn't exist, create it from CSV
+                    print(f"📝 Creating new collection '{COLLECTION_NAME}' from CSV...")
                     df = pd.read_csv(CSV_FILE, encoding="utf-8-sig")
                     df.columns = df.columns.str.strip()
-                    collection = chroma_client.get_or_create_collection(COLLECTION_NAME)
+                    collection = chroma_client.create_collection(COLLECTION_NAME)
+                    
+                    # ✅ CRITICAL FIX: Combine ALL searchable fields
                     for _, row in df.iterrows():
                         doc_id = str(row.get("id", _))
+                        
+                        # Get all fields
+                        title = str(row.get("title", ""))
                         content = str(row.get("content", ""))
-                        metadata = {col: str(row[col]) for col in df.columns if col != "content"}
-                        collection.add(ids=[doc_id], documents=[content], metadatas=[metadata])
-                    print(f"✅ {CSV_FILE} loaded into Chroma collection '{COLLECTION_NAME}'")
+                        alt_names = str(row.get("alt-names", ""))
+                        context_triggers = str(row.get("context triggers", ""))
+                        sustainability_nudge = str(row.get("sustainability nudge", ""))
+                        
+                        # Create combined searchable document
+                        combined_document = f"""
+Title: {title}
+Content: {content}
+Alternative Names: {alt_names}
+Context: {context_triggers}
+Sustainability: {sustainability_nudge}
+                        """.strip()
+                        
+                        # Keep metadata separate
+                        metadata = {
+                            "title": title,
+                            "alt-names": alt_names,
+                            "category": str(row.get("category", "")),
+                            "context_triggers": context_triggers,
+                            "sustainability_nudge": sustainability_nudge
+                        }
+                        
+                        collection.add(
+                            ids=[doc_id],
+                            documents=[combined_document],
+                            metadatas=[metadata]
+                        )
+                    
+                    print(f"✅ {CSV_FILE} loaded into Chroma collection '{COLLECTION_NAME}' ({len(df)} entries)")
 
         # Retrieve top Chroma chunks
         results = collection.query(query_texts=[query_text], n_results=3)
         chunks = results.get('documents', [[]])[0]
+        metadatas = results.get('metadatas', [[]])[0]
+        
         if not chunks:
             chunks = ["Sorry, I don't have information on that topic yet."]
+            metadatas = [{}]
 
-        # Prepare user message
-        context_text = "\n".join(chunks)
+        # ✅ IMPROVED: Extract sustainability nudges from results
+        context_parts = []
+        sustainability_nudges = []
+        
+        for i, (chunk, metadata) in enumerate(zip(chunks, metadatas)):
+            # Add the main content
+            context_parts.append(f"Source {i+1}:\n{chunk}")
+            
+            # Extract sustainability nudge if present
+            nudge = metadata.get('sustainability_nudge', '').strip()
+            if nudge and nudge.lower() != 'nan':
+                sustainability_nudges.append(nudge)
+        
+        context_text = "\n\n".join(context_parts)
+        
+        # Add sustainability section if we found nudges
+        if sustainability_nudges:
+            sustainability_text = "\n".join([f"• {nudge}" for nudge in sustainability_nudges])
+            context_text += f"\n\n🌱 Sustainability Tips:\n{sustainability_text}"
+
+        # Prepare user message with enhanced context
         user_message = (
-            "Use the following extracted notes to answer the user's question.\n\n"
+            "Use the following information to answer the user's question.\n\n"
             f"{context_text}\n\n"
             f"User question: {query_text}\n\n"
-            "Answer naturally and helpfully in Japanaut's voice."
+            "Answer naturally and helpfully in Japanaut's voice. "
+            "If sustainability tips are provided, weave them naturally into your response."
         )
 
         # Call OpenAI Chat API

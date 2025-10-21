@@ -6,7 +6,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY ./app ./app
-COPY TEMPLES.csv ./TEMPLES.csv
+COPY temples_kamakura_v1.csv ./temples_kamakura_v1.csv
+COPY ./chroma_db ./chroma_db
 
 EXPOSE 8000
 
