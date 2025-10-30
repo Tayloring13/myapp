@@ -130,11 +130,15 @@ Sustainability: {sustainability_nudge}
 
         # Prepare user message with enhanced context
         user_message = (
-            "Use the following information to answer the user's question.\n\n"
+            "CONTEXT FROM DATABASE (use this as your PRIMARY source):\n\n"
             f"{context_text}\n\n"
-            f"User question: {query_text}\n\n"
-            "Answer naturally and helpfully in Japanaut's voice. "
-            "If sustainability tips are provided, weave them naturally into your response."
+            f"USER QUESTION: {query_text}\n\n"
+            "INSTRUCTIONS:\n"
+            "- Base your answer on the context provided above\n"
+            "- Keep your response to 100-150 words (30-45 seconds of speech)\n"
+            "- If the context doesn't contain the answer, admit you don't know\n"
+            "- Weave in sustainability tips naturally if provided\n"
+            "- Be conversational, engaging, and concise"
         )
 
         # Call OpenAI Chat API
@@ -145,7 +149,7 @@ Sustainability: {sustainability_nudge}
                 {"role": "user", "content": user_message}
             ],
             temperature=0.7,
-            max_tokens=300
+            max_tokens=200
         )
 
         answer = response.choices[0].message.content.strip()
