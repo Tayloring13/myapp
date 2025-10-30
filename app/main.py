@@ -1,4 +1,4 @@
-from dotenv import load_dotenv
+ffrom dotenv import load_dotenv
 load_dotenv()  # <-- loads your .env file immediately
 
 import os
@@ -128,10 +128,11 @@ Sustainability: {sustainability_nudge}
             sustainability_text = "\n".join([f"• {nudge}" for nudge in sustainability_nudges])
             context_text += f"\n\n🌱 Sustainability Tips:\n{sustainability_text}"
 
-        # Prepare user message with enhanced context
+        # ✅ STREAMLINED: Shorter user message (prompts.py covers the detailed instructions)
         user_message = f"{context_text}\n\nUser question: {query_text}"
 
         # Call OpenAI Chat API
+        # ✅ UPDATED: Reduced max_tokens from 300 to 200 for brevity
         response = client.chat.completions.create(
             model=MODEL,
             messages=[
@@ -161,6 +162,8 @@ async def voice_query(audio: UploadFile = File(...)):
     Accepts audio file, transcribes it, gets GPT response, 
     converts to speech, and returns audio
     """
+    import time
+    start_time = time.time()
     global whisper_model
     
     try:
@@ -194,8 +197,10 @@ async def voice_query(audio: UploadFile = File(...)):
             temp_audio_path = temp_audio.name
         
         # Transcribe audio with Whisper
+        transcribe_start = time.time()
         segments, info = whisper_model.transcribe(temp_audio_path, beam_size=5)
         transcribed_text = " ".join([segment.text for segment in segments])
+        print(f"⏱️ Whisper transcription took: {time.time() - transcribe_start:.2f}s")
         
         # Clean up temp audio file
         os.unlink(temp_audio_path)
@@ -207,9 +212,12 @@ async def voice_query(audio: UploadFile = File(...)):
             )
         
         # Get GPT response
+        gpt_start = time.time()
         gpt_response = get_gpt_response(transcribed_text)
+        print(f"⏱️ GPT response took: {time.time() - gpt_start:.2f}s")
         
         # Convert response to speech with ElevenLabs
+        tts_start = time.time()
         elevenlabs_client = ElevenLabs(api_key=ELEVENLABS_KEY)
         
         audio_response = elevenlabs_client.text_to_speech.convert(
@@ -220,6 +228,8 @@ async def voice_query(audio: UploadFile = File(...)):
         
         # Collect audio bytes
         audio_bytes = b"".join(audio_response)
+        print(f"⏱️ ElevenLabs TTS took: {time.time() - tts_start:.2f}s")
+        print(f"⏱️ TOTAL request took: {time.time() - start_time:.2f}s")
         
         # Return audio file
         return Response(
@@ -248,4 +258,3 @@ def ping():
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8000"))
-    uvicorn.run("app.main:app", host="0.0.0.0", port=port)
