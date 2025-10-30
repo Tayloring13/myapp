@@ -129,17 +129,7 @@ Sustainability: {sustainability_nudge}
             context_text += f"\n\n🌱 Sustainability Tips:\n{sustainability_text}"
 
         # Prepare user message with enhanced context
-        user_message = (
-            "CONTEXT FROM DATABASE (use this as your PRIMARY source):\n\n"
-            f"{context_text}\n\n"
-            f"USER QUESTION: {query_text}\n\n"
-            "INSTRUCTIONS:\n"
-            "- Base your answer on the context provided above\n"
-            "- Keep your response to 100-150 words (30-45 seconds of speech)\n"
-            "- If the context doesn't contain the answer, admit you don't know\n"
-            "- Weave in sustainability tips naturally if provided\n"
-            "- Be conversational, engaging, and concise"
-        )
+        user_message = f"{context_text}\n\nUser question: {query_text}"
 
         # Call OpenAI Chat API
         response = client.chat.completions.create(
