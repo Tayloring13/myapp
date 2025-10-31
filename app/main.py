@@ -3,6 +3,7 @@ load_dotenv()  # <-- loads your .env file immediately
 
 import os
 import uvicorn
+import logging
 from fastapi import FastAPI, Query, File, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel
@@ -15,6 +16,10 @@ from elevenlabs import ElevenLabs
 import tempfile
 
 from app.prompts import JAPANAUT_PROMPT
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
@@ -99,7 +104,7 @@ Sustainability: {sustainability_nudge}
                     
                     print(f"✅ {CSV_FILE} loaded into Chroma collection '{COLLECTION_NAME}' ({len(df)} entries)")
 
-        # Retrieve top Chroma chunks
+        # Retrieve top Chroma chunks (reduced from 3 to 2 for speed)
         results = collection.query(query_texts=[query_text], n_results=2)
         chunks = results.get('documents', [[]])[0]
         metadatas = results.get('metadatas', [[]])[0]
@@ -162,8 +167,6 @@ async def voice_query(audio: UploadFile = File(...)):
     Accepts audio file, transcribes it, gets GPT response, 
     converts to speech, and returns audio
     """
-    import time
-    start_time = time.time()
     global whisper_model
     
     try:
@@ -197,10 +200,8 @@ async def voice_query(audio: UploadFile = File(...)):
             temp_audio_path = temp_audio.name
         
         # Transcribe audio with Whisper
-        transcribe_start = time.time()
-        segments, info = whisper_model.transcribe(temp_audio_path, beam_size=3)
+        segments, info = whisper_model.transcribe(temp_audio_path, beam_size=5)
         transcribed_text = " ".join([segment.text for segment in segments])
-        print(f"⏱️ Whisper transcription took: {time.time() - transcribe_start:.2f}s")
         
         # Clean up temp audio file
         os.unlink(temp_audio_path)
@@ -212,12 +213,9 @@ async def voice_query(audio: UploadFile = File(...)):
             )
         
         # Get GPT response
-        gpt_start = time.time()
         gpt_response = get_gpt_response(transcribed_text)
-        print(f"⏱️ GPT response took: {time.time() - gpt_start:.2f}s")
         
         # Convert response to speech with ElevenLabs
-        tts_start = time.time()
         elevenlabs_client = ElevenLabs(api_key=ELEVENLABS_KEY)
         
         audio_response = elevenlabs_client.text_to_speech.convert(
@@ -228,8 +226,6 @@ async def voice_query(audio: UploadFile = File(...)):
         
         # Collect audio bytes
         audio_bytes = b"".join(audio_response)
-        print(f"⏱️ ElevenLabs TTS took: {time.time() - tts_start:.2f}s")
-        print(f"⏱️ TOTAL request took: {time.time() - start_time:.2f}s")
         
         # Return audio file
         return Response(
@@ -246,6 +242,78 @@ async def voice_query(audio: UploadFile = File(...)):
             status_code=500
         )
 
+# --- DEBUG: Voice query with timing data ---
+@app.post("/voice-query-debug")
+async def voice_query_debug(audio: UploadFile = File(...)):
+    """
+    Same as voice-query but returns timing breakdown as JSON instead of audio
+    """
+    import time
+    times = {}
+    start_total = time.time()
+    global whisper_model
+    
+    try:
+        # Get API keys
+        ELEVENLABS_KEY = os.getenv("ELEVENLABS_API_KEY")
+        ELEVENLABS_VOICE = os.getenv("ELEVENLABS_VOICE_ID")
+        
+        if not ELEVENLABS_KEY or not ELEVENLABS_VOICE:
+            return {"error": "ElevenLabs credentials not configured"}
+        
+        # Initialize Whisper model
+        with whisper_lock:
+            if whisper_model is None:
+                whisper_model = WhisperModel("base", device="cpu", compute_type="int8")
+        
+        # Save uploaded audio to temp file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_audio:
+            content = await audio.read()
+            temp_audio.write(content)
+            temp_audio_path = temp_audio.name
+        
+        # Transcribe audio with Whisper
+        start_whisper = time.time()
+        segments, info = whisper_model.transcribe(temp_audio_path, beam_size=5)
+        transcribed_text = " ".join([segment.text for segment in segments])
+        times['whisper_seconds'] = round(time.time() - start_whisper, 2)
+        
+        # Clean up temp audio file
+        os.unlink(temp_audio_path)
+        
+        if not transcribed_text.strip():
+            return {"error": "No speech detected"}
+        
+        times['transcribed_text'] = transcribed_text
+        
+        # Get GPT response
+        start_gpt = time.time()
+        gpt_response = get_gpt_response(transcribed_text)
+        times['gpt_seconds'] = round(time.time() - start_gpt, 2)
+        times['gpt_response_length'] = len(gpt_response)
+        
+        # Convert response to speech with ElevenLabs
+        start_tts = time.time()
+        elevenlabs_client = ElevenLabs(api_key=ELEVENLABS_KEY)
+        
+        audio_response = elevenlabs_client.text_to_speech.convert(
+            voice_id=ELEVENLABS_VOICE,
+            text=gpt_response,
+            model_id="eleven_multilingual_v2"
+        )
+        
+        # Collect audio bytes (just to measure time)
+        audio_bytes = b"".join(audio_response)
+        times['tts_seconds'] = round(time.time() - start_tts, 2)
+        times['audio_size_kb'] = round(len(audio_bytes) / 1024, 2)
+        
+        times['total_seconds'] = round(time.time() - start_total, 2)
+        
+        return times
+        
+    except Exception as e:
+        return {"error": str(e)}
+
 # --- Root route for Railway health checks ---
 @app.get("/")
 def root():
@@ -258,3 +326,4 @@ def ping():
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8000"))
+    uvicorn.run("app.main:app", host="0.0.0.0", port=port)
