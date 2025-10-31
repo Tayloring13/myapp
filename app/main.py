@@ -100,7 +100,7 @@ Sustainability: {sustainability_nudge}
                     print(f"✅ {CSV_FILE} loaded into Chroma collection '{COLLECTION_NAME}' ({len(df)} entries)")
 
         # Retrieve top Chroma chunks
-        results = collection.query(query_texts=[query_text], n_results=3)
+        results = collection.query(query_texts=[query_text], n_results=2)
         chunks = results.get('documents', [[]])[0]
         metadatas = results.get('metadatas', [[]])[0]
         
@@ -198,7 +198,7 @@ async def voice_query(audio: UploadFile = File(...)):
         
         # Transcribe audio with Whisper
         transcribe_start = time.time()
-        segments, info = whisper_model.transcribe(temp_audio_path, beam_size=5)
+        segments, info = whisper_model.transcribe(temp_audio_path, beam_size=3)
         transcribed_text = " ".join([segment.text for segment in segments])
         print(f"⏱️ Whisper transcription took: {time.time() - transcribe_start:.2f}s")
         
