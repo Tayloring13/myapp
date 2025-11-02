@@ -7,7 +7,6 @@ import logging
 from fastapi import FastAPI, Query, File, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel
-from contextlib import asynccontextmanager
 import chromadb
 import pandas as pd
 from openai import OpenAI
@@ -36,78 +35,72 @@ whisper_lock = Lock()
 # Choose model via env var
 MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
-# ✅ NEW: Lifespan event to preload Chroma collection
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    global collection
-    
-    # --- STARTUP ---
-    print("🚀 Starting Japanaut backend...")
-    start_time = time.time()
-    
+# ✅ Initialize FastAPI app
+app = FastAPI()
+
+# ✅ CRITICAL: Load Chroma collection at module level (before any requests)
+print("🚀 Starting Japanaut backend...")
+start_time = time.time()
+
+try:
+    print(f"🔄 Pre-loading Chroma collection '{COLLECTION_NAME}'...")
     try:
-        # Load Chroma collection at startup
-        print(f"🔄 Pre-loading Chroma collection '{COLLECTION_NAME}'...")
-        try:
-            collection = chroma_client.get_collection(COLLECTION_NAME)
-            print(f"✅ Loaded existing Chroma collection '{COLLECTION_NAME}'")
-        except chromadb.errors.InvalidCollectionException:
-            # Collection doesn't exist, create it from CSV
-            print(f"📝 Creating new collection '{COLLECTION_NAME}' from CSV...")
-            df = pd.read_csv(CSV_FILE, encoding="utf-8-sig")
-            df.columns = df.columns.str.strip()
-            collection = chroma_client.create_collection(COLLECTION_NAME)
+        collection = chroma_client.get_collection(COLLECTION_NAME)
+        print(f"✅ Loaded existing Chroma collection '{COLLECTION_NAME}'")
+    except chromadb.errors.InvalidCollectionException:
+        # Collection doesn't exist, create it from CSV
+        print(f"📝 Creating new collection '{COLLECTION_NAME}' from CSV...")
+        df = pd.read_csv(CSV_FILE, encoding="utf-8-sig")
+        df.columns = df.columns.str.strip()
+        collection = chroma_client.create_collection(COLLECTION_NAME)
+        
+        for _, row in df.iterrows():
+            doc_id = str(row.get("id", _))
             
-            for _, row in df.iterrows():
-                doc_id = str(row.get("id", _))
-                
-                # Get all fields
-                title = str(row.get("title", ""))
-                content = str(row.get("content", ""))
-                alt_names = str(row.get("alt-names", ""))
-                context_triggers = str(row.get("context triggers", ""))
-                sustainability_nudge = str(row.get("sustainability nudge", ""))
-                
-                # Create combined searchable document
-                combined_document = f"""
+            # Get all fields
+            title = str(row.get("title", ""))
+            content = str(row.get("content", ""))
+            alt_names = str(row.get("alt-names", ""))
+            context_triggers = str(row.get("context triggers", ""))
+            sustainability_nudge = str(row.get("sustainability nudge", ""))
+            
+            # Create combined searchable document
+            combined_document = f"""
 Title: {title}
 Content: {content}
 Alternative Names: {alt_names}
 Context: {context_triggers}
 Sustainability: {sustainability_nudge}
-                """.strip()
-                
-                # Keep metadata separate
-                metadata = {
-                    "title": title,
-                    "alt-names": alt_names,
-                    "category": str(row.get("category", "")),
-                    "context_triggers": context_triggers,
-                    "sustainability_nudge": sustainability_nudge
-                }
-                
-                collection.add(
-                    ids=[doc_id],
-                    documents=[combined_document],
-                    metadatas=[metadata]
-                )
+            """.strip()
             
-            print(f"✅ {CSV_FILE} loaded into Chroma ({len(df)} entries)")
+            # Keep metadata separate
+            metadata = {
+                "title": title,
+                "alt-names": alt_names,
+                "category": str(row.get("category", "")),
+                "context_triggers": context_triggers,
+                "sustainability_nudge": sustainability_nudge
+            }
+            
+            collection.add(
+                ids=[doc_id],
+                documents=[combined_document],
+                metadatas=[metadata]
+            )
         
-        elapsed = time.time() - start_time
-        print(f"✅ Startup complete in {elapsed:.2f}s")
-        
-    except Exception as e:
-        print(f"❌ Startup error: {str(e)}")
-        raise
+        print(f"✅ {CSV_FILE} loaded into Chroma ({len(df)} entries)")
     
-    yield  # Application runs here
+    # ✅ CRITICAL: Trigger embedding model download NOW by doing a dummy query
+    print("🔄 Pre-warming embedding model...")
+    dummy_results = collection.query(query_texts=["test"], n_results=1)
+    print("✅ Embedding model warmed up")
     
-    # --- SHUTDOWN ---
-    print("👋 Shutting down Japanaut backend...")
-
-# ✅ Apply lifespan to FastAPI app
-app = FastAPI(lifespan=lifespan)
+    elapsed = time.time() - start_time
+    print(f"✅ Startup complete in {elapsed:.2f}s")
+    
+except Exception as e:
+    print(f"❌ Startup error: {str(e)}")
+    raise
 
 # --- Response model for GPT-4 endpoint ---
 class LLMResponse(BaseModel):
@@ -126,7 +119,7 @@ def get_gpt_response(query_text: str) -> str:
             raise ValueError("OPENAI_API_KEY environment variable is missing!")
         client = OpenAI(api_key=OPENAI_KEY)
 
-        # ✅ FIXED: Collection is already loaded at startup, no need for lazy init
+        # Collection is already loaded at startup
         if collection is None:
             raise RuntimeError("Chroma collection not initialized")
 
