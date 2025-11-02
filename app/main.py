@@ -242,7 +242,7 @@ async def voice_query(audio: UploadFile = File(...)):
         audio_response = elevenlabs_client.text_to_speech.convert(
             voice_id=ELEVENLABS_VOICE,
             text=gpt_response,
-            model_id="eleven_multilingual_v2"
+            model_id="eleven_flash_v2_5"  # ✅ Fast turbo model
         )
         
         # Collect audio bytes
@@ -328,7 +328,7 @@ async def voice_query_debug(audio: UploadFile = File(...)):
         audio_response = elevenlabs_client.text_to_speech.convert(
             voice_id=ELEVENLABS_VOICE,
             text=gpt_response,
-            model_id="eleven_multilingual_v2"
+            model_id="eleven_flash_v2_5"  # ✅ Fast turbo model
         )
         
         # Collect audio bytes (just to measure time)
