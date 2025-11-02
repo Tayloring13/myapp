@@ -7,6 +7,7 @@ import logging
 from fastapi import FastAPI, Query, File, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel
+from contextlib import asynccontextmanager
 import chromadb
 import pandas as pd
 from openai import OpenAI
@@ -14,6 +15,7 @@ from threading import Lock
 from faster_whisper import WhisperModel
 from elevenlabs import ElevenLabs
 import tempfile
+import time
 
 from app.prompts import JAPANAUT_PROMPT
 
@@ -21,14 +23,11 @@ from app.prompts import JAPANAUT_PROMPT
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI()
-
 # --- Global variables ---
-CSV_FILE = "./temples_kamakura_v1.csv"  # ✅ Updated filename
-COLLECTION_NAME = "temples_kamakura"     # ✅ Updated collection name
+CSV_FILE = "./temples_kamakura_v1.csv"
+COLLECTION_NAME = "temples_kamakura"
 chroma_client = chromadb.PersistentClient(path="./chroma_db")
 collection = None
-collection_lock = Lock()
 
 # Whisper model (lazy load)
 whisper_model = None
@@ -36,6 +35,79 @@ whisper_lock = Lock()
 
 # Choose model via env var
 MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+
+# ✅ NEW: Lifespan event to preload Chroma collection
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global collection
+    
+    # --- STARTUP ---
+    print("🚀 Starting Japanaut backend...")
+    start_time = time.time()
+    
+    try:
+        # Load Chroma collection at startup
+        print(f"🔄 Pre-loading Chroma collection '{COLLECTION_NAME}'...")
+        try:
+            collection = chroma_client.get_collection(COLLECTION_NAME)
+            print(f"✅ Loaded existing Chroma collection '{COLLECTION_NAME}'")
+        except chromadb.errors.InvalidCollectionException:
+            # Collection doesn't exist, create it from CSV
+            print(f"📝 Creating new collection '{COLLECTION_NAME}' from CSV...")
+            df = pd.read_csv(CSV_FILE, encoding="utf-8-sig")
+            df.columns = df.columns.str.strip()
+            collection = chroma_client.create_collection(COLLECTION_NAME)
+            
+            for _, row in df.iterrows():
+                doc_id = str(row.get("id", _))
+                
+                # Get all fields
+                title = str(row.get("title", ""))
+                content = str(row.get("content", ""))
+                alt_names = str(row.get("alt-names", ""))
+                context_triggers = str(row.get("context triggers", ""))
+                sustainability_nudge = str(row.get("sustainability nudge", ""))
+                
+                # Create combined searchable document
+                combined_document = f"""
+Title: {title}
+Content: {content}
+Alternative Names: {alt_names}
+Context: {context_triggers}
+Sustainability: {sustainability_nudge}
+                """.strip()
+                
+                # Keep metadata separate
+                metadata = {
+                    "title": title,
+                    "alt-names": alt_names,
+                    "category": str(row.get("category", "")),
+                    "context_triggers": context_triggers,
+                    "sustainability_nudge": sustainability_nudge
+                }
+                
+                collection.add(
+                    ids=[doc_id],
+                    documents=[combined_document],
+                    metadatas=[metadata]
+                )
+            
+            print(f"✅ {CSV_FILE} loaded into Chroma ({len(df)} entries)")
+        
+        elapsed = time.time() - start_time
+        print(f"✅ Startup complete in {elapsed:.2f}s")
+        
+    except Exception as e:
+        print(f"❌ Startup error: {str(e)}")
+        raise
+    
+    yield  # Application runs here
+    
+    # --- SHUTDOWN ---
+    print("👋 Shutting down Japanaut backend...")
+
+# ✅ Apply lifespan to FastAPI app
+app = FastAPI(lifespan=lifespan)
 
 # --- Response model for GPT-4 endpoint ---
 class LLMResponse(BaseModel):
@@ -54,55 +126,9 @@ def get_gpt_response(query_text: str) -> str:
             raise ValueError("OPENAI_API_KEY environment variable is missing!")
         client = OpenAI(api_key=OPENAI_KEY)
 
-        # Lazy Chroma initialization
-        with collection_lock:
-            if collection is None:
-                try:
-                    collection = chroma_client.get_collection(COLLECTION_NAME)
-                    print(f"✅ Loaded existing Chroma collection '{COLLECTION_NAME}'")
-                except chromadb.errors.InvalidCollectionException:
-                    # Collection doesn't exist, create it from CSV
-                    print(f"📝 Creating new collection '{COLLECTION_NAME}' from CSV...")
-                    df = pd.read_csv(CSV_FILE, encoding="utf-8-sig")
-                    df.columns = df.columns.str.strip()
-                    collection = chroma_client.create_collection(COLLECTION_NAME)
-                    
-                    # ✅ CRITICAL FIX: Combine ALL searchable fields
-                    for _, row in df.iterrows():
-                        doc_id = str(row.get("id", _))
-                        
-                        # Get all fields
-                        title = str(row.get("title", ""))
-                        content = str(row.get("content", ""))
-                        alt_names = str(row.get("alt-names", ""))
-                        context_triggers = str(row.get("context triggers", ""))
-                        sustainability_nudge = str(row.get("sustainability nudge", ""))
-                        
-                        # Create combined searchable document
-                        combined_document = f"""
-Title: {title}
-Content: {content}
-Alternative Names: {alt_names}
-Context: {context_triggers}
-Sustainability: {sustainability_nudge}
-                        """.strip()
-                        
-                        # Keep metadata separate
-                        metadata = {
-                            "title": title,
-                            "alt-names": alt_names,
-                            "category": str(row.get("category", "")),
-                            "context_triggers": context_triggers,
-                            "sustainability_nudge": sustainability_nudge
-                        }
-                        
-                        collection.add(
-                            ids=[doc_id],
-                            documents=[combined_document],
-                            metadatas=[metadata]
-                        )
-                    
-                    print(f"✅ {CSV_FILE} loaded into Chroma collection '{COLLECTION_NAME}' ({len(df)} entries)")
+        # ✅ FIXED: Collection is already loaded at startup, no need for lazy init
+        if collection is None:
+            raise RuntimeError("Chroma collection not initialized")
 
         # Retrieve top Chroma chunks (reduced from 3 to 2 for speed)
         results = collection.query(query_texts=[query_text], n_results=2)
@@ -113,7 +139,7 @@ Sustainability: {sustainability_nudge}
             chunks = ["Sorry, I don't have information on that topic yet."]
             metadatas = [{}]
 
-        # ✅ IMPROVED: Extract sustainability nudges from results
+        # Extract sustainability nudges from results
         context_parts = []
         sustainability_nudges = []
         
@@ -133,11 +159,10 @@ Sustainability: {sustainability_nudge}
             sustainability_text = "\n".join([f"• {nudge}" for nudge in sustainability_nudges])
             context_text += f"\n\n🌱 Sustainability Tips:\n{sustainability_text}"
 
-        # ✅ STREAMLINED: Shorter user message (prompts.py covers the detailed instructions)
+        # Shorter user message (prompts.py covers detailed instructions)
         user_message = f"{context_text}\n\nUser question: {query_text}"
 
         # Call OpenAI Chat API
-        # ✅ UPDATED: Reduced max_tokens from 300 to 200 for brevity
         response = client.chat.completions.create(
             model=MODEL,
             messages=[
@@ -169,39 +194,39 @@ async def voice_query(audio: UploadFile = File(...)):
     """
     global whisper_model
     
+    # ✅ ADD TIMING DEBUG
+    timings = {}
+    start_total = time.time()
+    
     try:
         # Get API keys
         ELEVENLABS_KEY = os.getenv("ELEVENLABS_API_KEY")
         ELEVENLABS_VOICE = os.getenv("ELEVENLABS_VOICE_ID")
         
-        # Debug logging
-        print(f"🔑 ELEVENLABS_API_KEY present: {bool(ELEVENLABS_KEY)}")
-        print(f"🔑 ELEVENLABS_VOICE_ID present: {bool(ELEVENLABS_VOICE)}")
-        if ELEVENLABS_KEY:
-            print(f"🔑 API Key length: {len(ELEVENLABS_KEY)}")
-
         if not ELEVENLABS_KEY or not ELEVENLABS_VOICE:
             return Response(
                 content="ElevenLabs credentials not configured",
                 status_code=500
             )
         
-        
         # Initialize Whisper model (lazy load)
         with whisper_lock:
             if whisper_model is None:
-                # Use 'base' model for speed, or 'small'/'medium' for better accuracy
                 whisper_model = WhisperModel("base", device="cpu", compute_type="int8")
         
         # Save uploaded audio to temp file
+        start = time.time()
         with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_audio:
             content = await audio.read()
             temp_audio.write(content)
             temp_audio_path = temp_audio.name
+        timings['audio_upload'] = round(time.time() - start, 2)
         
         # Transcribe audio with Whisper
+        start = time.time()
         segments, info = whisper_model.transcribe(temp_audio_path, beam_size=5)
         transcribed_text = " ".join([segment.text for segment in segments])
+        timings['stt_whisper'] = round(time.time() - start, 2)
         
         # Clean up temp audio file
         os.unlink(temp_audio_path)
@@ -213,9 +238,12 @@ async def voice_query(audio: UploadFile = File(...)):
             )
         
         # Get GPT response
+        start = time.time()
         gpt_response = get_gpt_response(transcribed_text)
+        timings['gpt_processing'] = round(time.time() - start, 2)
         
         # Convert response to speech with ElevenLabs
+        start = time.time()
         elevenlabs_client = ElevenLabs(api_key=ELEVENLABS_KEY)
         
         audio_response = elevenlabs_client.text_to_speech.convert(
@@ -226,6 +254,12 @@ async def voice_query(audio: UploadFile = File(...)):
         
         # Collect audio bytes
         audio_bytes = b"".join(audio_response)
+        timings['tts_elevenlabs'] = round(time.time() - start, 2)
+        
+        timings['total_backend'] = round(time.time() - start_total, 2)
+        
+        # ✅ LOG TIMINGS TO RAILWAY
+        print(f"⏱️ TIMINGS: {timings}")
         
         # Return audio file
         return Response(
@@ -237,6 +271,7 @@ async def voice_query(audio: UploadFile = File(...)):
         )
         
     except Exception as e:
+        print(f"❌ Error: {str(e)}")
         return Response(
             content=f"Error processing voice query: {str(e)}",
             status_code=500
@@ -248,8 +283,7 @@ async def voice_query_debug(audio: UploadFile = File(...)):
     """
     Same as voice-query but returns timing breakdown as JSON instead of audio
     """
-    import time
-    times = {}
+    timings = {}
     start_total = time.time()
     global whisper_model
     
@@ -267,16 +301,18 @@ async def voice_query_debug(audio: UploadFile = File(...)):
                 whisper_model = WhisperModel("base", device="cpu", compute_type="int8")
         
         # Save uploaded audio to temp file
+        start = time.time()
         with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_audio:
             content = await audio.read()
             temp_audio.write(content)
             temp_audio_path = temp_audio.name
+        timings['audio_upload_seconds'] = round(time.time() - start, 2)
         
         # Transcribe audio with Whisper
-        start_whisper = time.time()
+        start = time.time()
         segments, info = whisper_model.transcribe(temp_audio_path, beam_size=5)
         transcribed_text = " ".join([segment.text for segment in segments])
-        times['whisper_seconds'] = round(time.time() - start_whisper, 2)
+        timings['whisper_seconds'] = round(time.time() - start, 2)
         
         # Clean up temp audio file
         os.unlink(temp_audio_path)
@@ -284,16 +320,16 @@ async def voice_query_debug(audio: UploadFile = File(...)):
         if not transcribed_text.strip():
             return {"error": "No speech detected"}
         
-        times['transcribed_text'] = transcribed_text
+        timings['transcribed_text'] = transcribed_text
         
         # Get GPT response
-        start_gpt = time.time()
+        start = time.time()
         gpt_response = get_gpt_response(transcribed_text)
-        times['gpt_seconds'] = round(time.time() - start_gpt, 2)
-        times['gpt_response_length'] = len(gpt_response)
+        timings['gpt_seconds'] = round(time.time() - start, 2)
+        timings['gpt_response_length'] = len(gpt_response)
         
         # Convert response to speech with ElevenLabs
-        start_tts = time.time()
+        start = time.time()
         elevenlabs_client = ElevenLabs(api_key=ELEVENLABS_KEY)
         
         audio_response = elevenlabs_client.text_to_speech.convert(
@@ -304,12 +340,12 @@ async def voice_query_debug(audio: UploadFile = File(...)):
         
         # Collect audio bytes (just to measure time)
         audio_bytes = b"".join(audio_response)
-        times['tts_seconds'] = round(time.time() - start_tts, 2)
-        times['audio_size_kb'] = round(len(audio_bytes) / 1024, 2)
+        timings['tts_seconds'] = round(time.time() - start, 2)
+        timings['audio_size_kb'] = round(len(audio_bytes) / 1024, 2)
         
-        times['total_seconds'] = round(time.time() - start_total, 2)
+        timings['total_seconds'] = round(time.time() - start_total, 2)
         
-        return times
+        return timings
         
     except Exception as e:
         return {"error": str(e)}
